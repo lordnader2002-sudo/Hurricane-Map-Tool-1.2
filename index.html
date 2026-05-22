@@ -1,0 +1,191 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Hurricane Summary Map Tool</title>
+
+  <link rel="stylesheet" href="vendor/leaflet/leaflet.css" />
+  <link rel="stylesheet" href="css/style.css" />
+</head>
+<body>
+  <header class="app-header">
+    <div class="app-title">Hurricane Summary Map Tool</div>
+    <div class="storm-meta" id="stormMeta">No storm loaded</div>
+  </header>
+
+  <div class="toolbar" role="toolbar" aria-label="Tool actions">
+    <label class="btn">
+      Upload KMZ / ZIP
+      <input type="file" id="kmzInput" accept=".kmz,.kml,.zip" multiple hidden />
+    </label>
+
+    <label class="btn">
+      Upload Properties CSV
+      <input type="file" id="csvInput" accept=".csv,text/csv" hidden />
+    </label>
+
+    <label class="btn" id="compareLabel" title="Load a second advisory to compare against the current one">
+      Compare advisory…
+      <input type="file" id="compareInput" accept=".kmz,.kml,.zip" multiple hidden />
+    </label>
+
+    <div class="buffer-control">
+      <label for="bufferSlider">Buffer:</label>
+      <input type="range" id="bufferSlider" min="0" max="500" step="10" value="100"
+             aria-describedby="bufferValue" />
+      <span id="bufferValue">100 mi</span>
+    </div>
+
+    <label class="checkbox">
+      <input type="checkbox" id="labelsToggle" checked />
+      Show callout labels
+    </label>
+
+    <button class="btn primary" id="exportBtn" disabled>Export PNG</button>
+    <button class="btn primary" id="exportPdfBtn" disabled>Export PDF</button>
+    <button class="btn" id="exportCsvBtn" disabled>Export Impacted CSV</button>
+    <button class="btn" id="shareBtn" disabled title="Copy a URL that recreates this view">Share view</button>
+    <button class="btn danger" id="resetBtn" title="Clear saved session and reload">Reset</button>
+
+    <div class="status" id="status" role="status" aria-live="polite"></div>
+  </div>
+
+  <div class="banner" id="restoreBanner" role="status" aria-live="polite" hidden>
+    <span class="banner-text" id="restoreBannerText">A saved session was found.</span>
+    <button class="btn primary small" id="restoreBtn">Restore</button>
+    <button class="btn small" id="dismissRestoreBtn">Start fresh</button>
+  </div>
+
+  <div class="timeline" id="timeline" role="region" aria-label="Storm timeline" hidden>
+    <label class="timeline-label" for="timelineSlider">Timeline:</label>
+    <input type="range" id="timelineSlider" min="0" max="100" step="1" value="0" />
+    <span class="timeline-time" id="timelineTime"></span>
+    <button class="btn small" id="timelineClearBtn"
+            title="Clear scrub marker" aria-label="Clear timeline scrub marker">×</button>
+  </div>
+
+  <main class="layout">
+    <div id="map"></div>
+
+    <aside class="side-panel">
+      <section class="panel-section">
+        <h3>Legend</h3>
+        <ul class="legend">
+          <li><span class="swatch cone"></span> Forecast cone</li>
+          <li><span class="swatch track"></span> Storm track</li>
+          <li><span class="swatch impacted"></span> Impacted property</li>
+          <li><span class="swatch normal"></span> Other property</li>
+        </ul>
+        <ul class="legend categories" id="categoryLegend"></ul>
+        <ul class="legend ww" id="wwLegend"></ul>
+      </section>
+
+      <section class="panel-section">
+        <h3>Track Points</h3>
+        <div class="track-defaults">
+          <label class="track-default-row">
+            <span>Default icon</span>
+            <select id="trackShapeDefault"></select>
+          </label>
+          <label class="track-default-row">
+            <span>Color by category</span>
+            <input type="checkbox" id="trackColorByCategory" checked />
+          </label>
+          <label class="track-default-row">
+            <span>Default color</span>
+            <input type="color" id="trackColorDefault" value="#1f4e79" disabled />
+          </label>
+        </div>
+        <p class="hint">
+          Click any track point on the map to give it a label, description, or
+          to change its icon and color individually.
+        </p>
+        <details class="track-points-list-wrap">
+          <summary>Track point list <span class="count" id="trackPointsCount">0</span></summary>
+          <ol class="track-points-list" id="trackPointsList"></ol>
+        </details>
+      </section>
+
+      <section class="panel-section" id="comparePanel" hidden>
+        <h3>Comparison</h3>
+        <div class="compare-meta" id="compareMeta"></div>
+        <button class="btn small" id="compareClearBtn">Clear comparison</button>
+        <details open class="compare-block">
+          <summary>Newly impacted <span class="count" id="newlyImpactedCount">0</span></summary>
+          <ol class="impacted-list" id="newlyImpactedList"></ol>
+        </details>
+        <details class="compare-block">
+          <summary>Dropped <span class="count muted" id="droppedCount">0</span></summary>
+          <ol class="impacted-list" id="droppedList"></ol>
+        </details>
+        <details class="compare-block">
+          <summary>Unchanged <span class="count muted" id="unchangedCount">0</span></summary>
+          <ol class="impacted-list" id="unchangedList"></ol>
+        </details>
+      </section>
+
+      <section class="panel-section" id="scrubPanel" hidden>
+        <h3>At scrub time <span class="count" id="scrubCount">0</span></h3>
+        <div class="scrub-meta" id="scrubMeta"></div>
+        <ol class="impacted-list" id="scrubList"></ol>
+      </section>
+
+      <section class="panel-section">
+        <h3>Impacted Properties <span class="count" id="impactedCount">0</span></h3>
+        <div class="sort-controls">
+          <label for="sortBy">Sort:</label>
+          <select id="sortBy">
+            <option value="distance">Distance to track</option>
+            <option value="name">Name</option>
+            <option value="cone">In cone first</option>
+          </select>
+        </div>
+        <p class="hint">
+          Drag a callout box on the map to reposition it — a red line keeps it
+          tied to its properties.
+        </p>
+        <ol class="impacted-list" id="impactedList"></ol>
+      </section>
+    </aside>
+  </main>
+
+  <div id="shortcutHelp" role="dialog" aria-modal="true"
+       aria-labelledby="shortcutHelpTitle" hidden>
+    <div class="shortcut-panel">
+      <h2 id="shortcutHelpTitle">Keyboard shortcuts</h2>
+      <ul class="shortcut-list">
+        <li><span>Export PNG</span> <kbd>Ctrl/⌘ + E</kbd></li>
+        <li><span>Share view</span> <kbd>Ctrl/⌘ + Shift + S</kbd></li>
+        <li><span>Step timeline back / forward</span> <kbd>← / →</kbd></li>
+        <li><span>Clear scrub or comparison</span> <kbd>Esc</kbd></li>
+        <li><span>Toggle this help</span> <kbd>?</kbd></li>
+      </ul>
+      <button type="button" class="shortcut-close" id="shortcutHelpClose">Close</button>
+    </div>
+  </div>
+
+  <!-- Vendor libs (self-hosted in /vendor so the tool works without CDN access) -->
+  <script src="vendor/leaflet/leaflet.js"></script>
+  <script src="vendor/jszip.min.js"></script>
+  <script src="vendor/papaparse.min.js"></script>
+  <script src="vendor/turf.min.js"></script>
+  <script src="vendor/shp.min.js"></script>
+  <script src="vendor/lz-string.min.js"></script>
+  <script src="vendor/jspdf.umd.min.js"></script>
+
+  <!-- App modules -->
+  <script src="js/toast.js"></script>
+  <script src="js/kmz.js"></script>
+  <script src="js/shapefile.js"></script>
+  <script src="js/csv.js"></script>
+  <script src="js/impact.js"></script>
+  <script src="js/map.js"></script>
+  <script src="js/export.js"></script>
+  <script src="js/session.js"></script>
+  <script src="js/share.js"></script>
+  <script src="js/timeline.js"></script>
+  <script src="js/compare.js"></script>
+  <script src="js/app.js"></script>
+</body>
+</html>
